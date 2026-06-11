@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { auth, db } from "@/lib/firebase";
-import { collection, query, orderBy, limit, onSnapshot } from "firebase/firestore";
+import { collection, query, orderBy, limit, onSnapshot, documentId } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
 import { useRouter } from "next/navigation";
 
@@ -37,12 +37,14 @@ export default function HistoryPage() {
     if (!user) return;
     const q = query(
       collection(db, "users", user.uid, "reports"),
-      orderBy("timestamp", "desc"),
+      orderBy(documentId(), "desc"),
       limit(7)
     );
     return onSnapshot(q, snap => {
-      const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as Report));
-      setReports(data.reverse()); // oldest first for graph
+      const data = snap.docs
+        .map(d => ({ id: d.id, ...d.data() } as Report))
+        .sort((a, b) => a.id.localeCompare(b.id));
+      setReports(data); // oldest first for graph and table
     });
   }, [user]);
 
@@ -50,12 +52,14 @@ export default function HistoryPage() {
     if (!user) return;
     const q = query(
       collection(db, "users", user.uid, "logs"),
-      orderBy("date", "desc"),
+      orderBy(documentId(), "desc"),
       limit(7)
     );
     return onSnapshot(q, snap => {
-      const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as LogEntry));
-      setLogs(data.reverse());
+      const data = snap.docs
+        .map(d => ({ id: d.id, ...d.data() } as LogEntry))
+        .sort((a, b) => a.id.localeCompare(b.id));
+      setLogs(data);
     });
   }, [user]);
 

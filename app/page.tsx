@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { auth, db } from "@/lib/firebase";
-import { collection, query, orderBy, limit, onSnapshot } from "firebase/firestore";
+import { collection, query, orderBy, limit, onSnapshot, documentId } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
 import { login, register, logout } from "@/lib/auth";
 import { useRouter } from "next/navigation";
@@ -34,7 +34,7 @@ export default function Dashboard() {
     if (!user) return;
     const q = query(
       collection(db, "users", user.uid, "reports"),
-      orderBy("timestamp", "asc"),
+      orderBy(documentId(), "desc"),
       limit(7)
     );
     return onSnapshot(q, snap => {
