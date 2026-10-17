@@ -24,6 +24,8 @@ export const logout = async () => {
   if (typeof window !== "undefined") {
     sessionStorage.removeItem("eepy_demo_mode");
     localStorage.removeItem("eepy_demo_mode");
+    localStorage.removeItem("eepy_username");
+    localStorage.removeItem("eepy_profile_cycle");
   }
   try {
     await signOut(auth);

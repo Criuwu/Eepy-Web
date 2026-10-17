@@ -2,11 +2,21 @@
 import { useEffect, useState } from "react";
 import { auth, db } from "@/lib/firebase";
 import { doc, setDoc, getDoc } from "firebase/firestore";
-import { onAuthStateChanged } from "firebase/auth";
+import { onAuthStateChanged, User as FirebaseUser } from "firebase/auth";
 import { useRouter } from "next/navigation";
 import Navbar from "@/app/components/Navbar";
 
 const defaultProfile = {
+  name: "",
+  age: "",
+  weight: "",
+  height: "",
+  occupation: "",
+  gender: "",
+  cycle: false,
+};
+
+const demoProfile = {
   name: "Demo Sleeper",
   age: "26",
   weight: "65",
@@ -16,9 +26,12 @@ const defaultProfile = {
   cycle: true,
 };
 
+type Profile = typeof defaultProfile;
+type AppUser = Pick<FirebaseUser, "uid" | "email" | "displayName">;
+
 export default function ProfilePage() {
-  const [user, setUser] = useState<any>(null);
-  const [profile, setProfile] = useState(defaultProfile);
+  const [user, setUser] = useState<AppUser | null>(null);
+  const [profile, setProfile] = useState<Profile>(defaultProfile);
   const [saved, setSaved] = useState(false);
   const [loading, setLoading] = useState(true);
   const [copiedUid, setCopiedUid] = useState(false);
@@ -26,17 +39,19 @@ export default function ProfilePage() {
 
   useEffect(() => {
     const isDemo = sessionStorage.getItem("eepy_demo_mode") === "true";
-    const localName = localStorage.getItem("eepy_username") || "Demo Sleeper";
-    const localCycle = localStorage.getItem("eepy_profile_cycle");
 
     if (isDemo) {
-      setUser({ uid: "demo_user_123", email: "demo.sleeper@eepy.app", displayName: localName });
-      setProfile((prev) => ({
-        ...prev,
-        name: localName,
-        cycle: localCycle !== null ? localCycle === "true" : true,
-      }));
-      setLoading(false);
+      const localName = localStorage.getItem("eepy_username") || "Demo Sleeper";
+      const localCycle = localStorage.getItem("eepy_profile_cycle");
+      queueMicrotask(() => {
+        setUser({ uid: "demo_user_123", email: "demo.sleeper@eepy.app", displayName: localName });
+        setProfile({
+          ...demoProfile,
+          name: localName,
+          cycle: localCycle !== null ? localCycle === "true" : true,
+        });
+        setLoading(false);
+      });
       return;
     }
 
@@ -46,17 +61,15 @@ export default function ProfilePage() {
         return;
       }
       setUser(u);
+      setProfile({
+        ...defaultProfile,
+        name: u.displayName || u.email?.split("@")[0] || "",
+      });
       try {
         const snap = await getDoc(doc(db, "users", u.uid, "profile", "info"));
         if (snap.exists()) {
           const data = snap.data();
           setProfile({ ...defaultProfile, ...data });
-          if (data.cycle !== undefined) {
-            localStorage.setItem("eepy_profile_cycle", JSON.stringify(data.cycle));
-          }
-          if (data.name) {
-            localStorage.setItem("eepy_username", data.name);
-          }
         }
       } catch (e) {
         console.warn("Profile load error:", e);
@@ -68,13 +81,10 @@ export default function ProfilePage() {
   async function save() {
     if (!user) return;
 
-    // Always persist to localStorage for immediate UI synchronization
-    localStorage.setItem("eepy_profile_cycle", JSON.stringify(profile.cycle));
-    if (profile.name) {
-      localStorage.setItem("eepy_username", profile.name);
-    }
-
-    if (user.uid !== "demo_user_123") {
+    if (user.uid === "demo_user_123") {
+      localStorage.setItem("eepy_profile_cycle", JSON.stringify(profile.cycle));
+      if (profile.name) localStorage.setItem("eepy_username", profile.name);
+    } else {
       try {
         await setDoc(doc(db, "users", user.uid, "profile", "info"), profile);
       } catch (e) {
@@ -85,14 +95,12 @@ export default function ProfilePage() {
     setTimeout(() => setSaved(false), 2500);
   }
 
-  function update(field: string, value: any) {
+  function update<K extends keyof Profile>(field: K, value: Profile[K]) {
     setProfile((prev) => {
       const updated = { ...prev, [field]: value };
-      if (field === "cycle") {
-        localStorage.setItem("eepy_profile_cycle", JSON.stringify(value));
-      }
-      if (field === "name") {
-        localStorage.setItem("eepy_username", value);
+      if (user?.uid === "demo_user_123") {
+        if (field === "cycle") localStorage.setItem("eepy_profile_cycle", JSON.stringify(value));
+        if (field === "name" && typeof value === "string") localStorage.setItem("eepy_username", value);
       }
       return updated;
     });

@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { auth, db } from "@/lib/firebase";
 import { doc, setDoc, getDoc } from "firebase/firestore";
-import { onAuthStateChanged } from "firebase/auth";
+import { onAuthStateChanged, User as FirebaseUser } from "firebase/auth";
 import { useRouter } from "next/navigation";
 import Navbar from "@/app/components/Navbar";
 
@@ -20,9 +20,12 @@ const defaultLog = {
   notes: ""
 };
 
+type DailyLog = typeof defaultLog;
+type AppUser = Pick<FirebaseUser, "uid" | "email">;
+
 export default function LogPage() {
-  const [user, setUser] = useState<any>(null);
-  const [log, setLog] = useState(defaultLog);
+  const [user, setUser] = useState<AppUser | null>(null);
+  const [log, setLog] = useState<DailyLog>(defaultLog);
   const [trackCycle, setTrackCycle] = useState(false);
   const [saved, setSaved] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -30,13 +33,14 @@ export default function LogPage() {
 
   useEffect(() => {
     const isDemo = sessionStorage.getItem("eepy_demo_mode") === "true";
-    const storedCycle = typeof window !== "undefined" ? localStorage.getItem("eepy_profile_cycle") : null;
-    const shouldTrack = storedCycle !== null ? storedCycle === "true" : false;
 
     if (isDemo) {
-      setUser({ uid: "demo_user_123", email: "demo.sleeper@eepy.app" });
-      setTrackCycle(shouldTrack);
-      setLoading(false);
+      queueMicrotask(() => {
+        const storedCycle = localStorage.getItem("eepy_profile_cycle");
+        setUser({ uid: "demo_user_123", email: "demo.sleeper@eepy.app" });
+        setTrackCycle(storedCycle !== null ? storedCycle === "true" : false);
+        setLoading(false);
+      });
       return;
     }
 
@@ -46,6 +50,8 @@ export default function LogPage() {
         return;
       }
       setUser(u);
+      setLog(defaultLog);
+      setTrackCycle(false);
       try {
         const ref = doc(db, "users", u.uid, "logs", today);
         const snap = await getDoc(ref);
@@ -58,24 +64,22 @@ export default function LogPage() {
   }, [router]);
 
   useEffect(() => {
+    if (!user) return;
+
     const checkCycleTracking = async () => {
-      const storedCycle = typeof window !== "undefined" ? localStorage.getItem("eepy_profile_cycle") : null;
-      if (storedCycle !== null) {
-        setTrackCycle(storedCycle === "true");
+      if (user.uid === "demo_user_123") {
+        const storedCycle = localStorage.getItem("eepy_profile_cycle");
+        setTrackCycle(storedCycle !== null ? storedCycle === "true" : false);
         return;
       }
 
-      if (user && user.uid !== "demo_user_123") {
-        try {
-          const profileSnap = await getDoc(doc(db, "users", user.uid, "profile", "info"));
-          if (profileSnap.exists()) {
-            const isCycleEnabled = profileSnap.data()?.cycle === true;
-            setTrackCycle(isCycleEnabled);
-            localStorage.setItem("eepy_profile_cycle", JSON.stringify(isCycleEnabled));
-          }
-        } catch (e) {
-          console.warn("Profile fetch error:", e);
+      try {
+        const profileSnap = await getDoc(doc(db, "users", user.uid, "profile", "info"));
+        if (profileSnap.exists()) {
+          setTrackCycle(profileSnap.data()?.cycle === true);
         }
+      } catch (e) {
+        console.warn("Profile fetch error:", e);
       }
     };
 
@@ -95,7 +99,7 @@ export default function LogPage() {
     setTimeout(() => setSaved(false), 2500);
   }
 
-  function update(field: string, value: any) {
+  function update<K extends keyof DailyLog>(field: K, value: DailyLog[K]) {
     setLog((prev) => ({ ...prev, [field]: value }));
   }
 

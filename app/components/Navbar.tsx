@@ -5,7 +5,11 @@ import { usePathname } from "next/navigation";
 import { logout } from "@/lib/auth";
 
 interface NavbarProps {
-  user?: any;
+  user?: {
+    uid?: string;
+    email?: string | null;
+    displayName?: string | null;
+  } | null;
 }
 
 export default function Navbar({ user }: NavbarProps) {
@@ -14,16 +18,16 @@ export default function Navbar({ user }: NavbarProps) {
   const [username, setUsername] = useState<string>("");
 
   useEffect(() => {
-    if (typeof window !== "undefined") {
-      const stored = localStorage.getItem("eepy_username");
-      if (stored) {
-        setUsername(stored);
-      } else if (user?.displayName) {
-        setUsername(user.displayName);
-      } else if (user?.email) {
-        setUsername(user.email.split("@")[0]);
-      }
-    }
+    let active = true;
+    const nextUsername = user?.uid === "demo_user_123"
+      ? localStorage.getItem("eepy_username") || user.displayName || "Demo Sleeper"
+      : user?.displayName || user?.email?.split("@")[0] || "";
+    queueMicrotask(() => {
+      if (active) setUsername(nextUsername);
+    });
+    return () => {
+      active = false;
+    };
   }, [user]);
 
   const currentPath = pathname ? pathname.replace(/\/+$/, "") || "/" : "/";
@@ -80,6 +84,8 @@ export default function Navbar({ user }: NavbarProps) {
     if (typeof window !== "undefined") {
       sessionStorage.removeItem("eepy_demo_mode");
       localStorage.removeItem("eepy_demo_mode");
+      localStorage.removeItem("eepy_username");
+      localStorage.removeItem("eepy_profile_cycle");
     }
     await logout();
   };

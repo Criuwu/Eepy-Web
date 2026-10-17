@@ -2,13 +2,24 @@
 import { useEffect, useState } from "react";
 import { auth, db } from "@/lib/firebase";
 import { collection, query, orderBy, limit, onSnapshot } from "firebase/firestore";
-import { onAuthStateChanged } from "firebase/auth";
+import { onAuthStateChanged, User as FirebaseUser } from "firebase/auth";
 import { useRouter } from "next/navigation";
 import Navbar from "@/app/components/Navbar";
 
 interface Report {
-  id:     string;
-  macros: any;
+  id: string;
+  macros?: {
+    environment?: {
+      avg_temperature_c?: number;
+      avg_humidity_pct?: number;
+    };
+    motion?: {
+      restlessness_pct?: number;
+    };
+    sound?: {
+      total_spikes?: number;
+    };
+  };
 }
 
 interface LogEntry {
@@ -22,6 +33,7 @@ interface LogEntry {
 }
 
 const DEMO_USER = { uid: "demo_user_123", email: "demo.sleeper@eepy.app" };
+type AppUser = FirebaseUser | typeof DEMO_USER;
 
 const DEMO_REPORTS: Report[] = [
   { id: "2026-06-02", macros: { environment: { avg_temperature_c: 21.0, avg_humidity_pct: 50 }, motion: { restlessness_pct: 35 }, sound: { total_spikes: 3 } } },
@@ -46,15 +58,17 @@ const DEMO_LOGS: LogEntry[] = [
 export default function HistoryPage() {
   const [reports, setReports] = useState<Report[]>([]);
   const [logs, setLogs]       = useState<LogEntry[]>([]);
-  const [user,    setUser]    = useState<any>(null);
+  const [user, setUser] = useState<AppUser | null>(null);
   const router = useRouter();
 
   useEffect(() => {
     const isDemo = sessionStorage.getItem("eepy_demo_mode") === "true";
     if (isDemo) {
-      setUser(DEMO_USER);
-      setReports(DEMO_REPORTS);
-      setLogs(DEMO_LOGS);
+      queueMicrotask(() => {
+        setUser(DEMO_USER);
+        setReports(DEMO_REPORTS);
+        setLogs(DEMO_LOGS);
+      });
       return;
     }
 
@@ -62,36 +76,54 @@ export default function HistoryPage() {
       if (!u) { router.push("/"); return; }
       setUser(u);
     });
-  }, []);
+  }, [router]);
 
   useEffect(() => {
     if (!user || user.uid === "demo_user_123") return;
+    let active = true;
+    queueMicrotask(() => {
+      if (active) setReports([]);
+    });
     const q = query(
       collection(db, "users", user.uid, "reports"),
       orderBy("timestamp", "desc"),
       limit(7)
     );
-    return onSnapshot(q, snap => {
+    const unsubscribe = onSnapshot(q, snap => {
       const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as Report));
-      setReports(data.length > 0 ? data.reverse() : DEMO_REPORTS);
-    }, () => {
-      setReports(DEMO_REPORTS);
+      setReports(data.reverse());
+    }, (err) => {
+      console.error("Firestore reports error:", err);
+      setReports([]);
     });
+    return () => {
+      active = false;
+      unsubscribe();
+    };
   }, [user]);
 
   useEffect(() => {
     if (!user || user.uid === "demo_user_123") return;
+    let active = true;
+    queueMicrotask(() => {
+      if (active) setLogs([]);
+    });
     const q = query(
       collection(db, "users", user.uid, "logs"),
       orderBy("date", "desc"),
       limit(7)
     );
-    return onSnapshot(q, snap => {
+    const unsubscribe = onSnapshot(q, snap => {
       const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as LogEntry));
-      setLogs(data.length > 0 ? data.reverse() : DEMO_LOGS);
-    }, () => {
-      setLogs(DEMO_LOGS);
+      setLogs(data.reverse());
+    }, (err) => {
+      console.error("Firestore logs error:", err);
+      setLogs([]);
     });
+    return () => {
+      active = false;
+      unsubscribe();
+    };
   }, [user]);
 
   const sortedReportsAsc = [...reports].sort((a, b) => a.id.localeCompare(b.id));
@@ -152,33 +184,41 @@ export default function HistoryPage() {
               <h2 className="text-base font-bold text-pink-100 uppercase tracking-wider">IoT Sensor Telemetry</h2>
             </div>
 
-            <SleekGraph
-              label="Restlessness Index (%)"
-              data={restDataAsc}
-              labels={labelsAsc}
-              max={maxRest}
-              color="#f472b6"
-              unit="%"
-              gradientId="pinkGradRest"
-            />
-            <SleekGraph
-              label="Avg Temperature (°C)"
-              data={tempDataAsc.map(v => v ?? 0)}
-              labels={labelsAsc}
-              max={maxTemp}
-              color="#fb7185"
-              unit="°C"
-              gradientId="pinkGradTemp"
-            />
-            <SleekGraph
-              label="Sound Spikes Recorded"
-              data={soundDataAsc}
-              labels={labelsAsc}
-              max={maxSound}
-              color="#ec4899"
-              unit=""
-              gradientId="pinkGradSound"
-            />
+            {reports.length > 0 ? (
+              <>
+                <SleekGraph
+                  label="Restlessness Index (%)"
+                  data={restDataAsc}
+                  labels={labelsAsc}
+                  max={maxRest}
+                  color="#f472b6"
+                  unit="%"
+                  gradientId="pinkGradRest"
+                />
+                <SleekGraph
+                  label="Avg Temperature (°C)"
+                  data={tempDataAsc.map(v => v ?? 0)}
+                  labels={labelsAsc}
+                  max={maxTemp}
+                  color="#fb7185"
+                  unit="°C"
+                  gradientId="pinkGradTemp"
+                />
+                <SleekGraph
+                  label="Sound Spikes Recorded"
+                  data={soundDataAsc}
+                  labels={labelsAsc}
+                  max={maxSound}
+                  color="#ec4899"
+                  unit=""
+                  gradientId="pinkGradSound"
+                />
+              </>
+            ) : (
+              <div className="glass-card rounded-2xl p-6 text-center text-white/60 border border-pink-500/20">
+                No telemetry recorded yet.
+              </div>
+            )}
           </div>
 
           {/* Right Column: Daily Lifestyle Habits */}
@@ -188,33 +228,41 @@ export default function HistoryPage() {
               <h2 className="text-base font-bold text-pink-100 uppercase tracking-wider">Daily Habit Correlations</h2>
             </div>
 
-            <SleekGraph
-              label="Caffeine Intake (Cups)"
-              data={caffeineData}
-              labels={logLabels}
-              max={maxCaffeine}
-              color="#f472b6"
-              unit=" cups"
-              gradientId="pinkGradCaff"
-            />
-            <SleekGraph
-              label="Stress Rating (/10)"
-              data={stressData}
-              labels={logLabels}
-              max={maxStress}
-              color="#fb7185"
-              unit="/10"
-              gradientId="pinkGradStress"
-            />
-            <SleekGraph
-              label="Productivity Output (/10)"
-              data={productivityData}
-              labels={logLabels}
-              max={maxProductivity}
-              color="#ec4899"
-              unit="/10"
-              gradientId="pinkGradProd"
-            />
+            {logs.length > 0 ? (
+              <>
+                <SleekGraph
+                  label="Caffeine Intake (Cups)"
+                  data={caffeineData}
+                  labels={logLabels}
+                  max={maxCaffeine}
+                  color="#f472b6"
+                  unit=" cups"
+                  gradientId="pinkGradCaff"
+                />
+                <SleekGraph
+                  label="Stress Rating (/10)"
+                  data={stressData}
+                  labels={logLabels}
+                  max={maxStress}
+                  color="#fb7185"
+                  unit="/10"
+                  gradientId="pinkGradStress"
+                />
+                <SleekGraph
+                  label="Productivity Output (/10)"
+                  data={productivityData}
+                  labels={logLabels}
+                  max={maxProductivity}
+                  color="#ec4899"
+                  unit="/10"
+                  gradientId="pinkGradProd"
+                />
+              </>
+            ) : (
+              <div className="glass-card rounded-2xl p-6 text-center text-white/60 border border-pink-500/20">
+                No daily logs recorded yet.
+              </div>
+            )}
           </div>
 
         </div>
@@ -259,6 +307,13 @@ export default function HistoryPage() {
                     </td>
                   </tr>
                 ))}
+                {reports.length === 0 && (
+                  <tr>
+                    <td colSpan={5} className="py-5 px-4 text-center text-white/50">
+                      No telemetry recorded yet.
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>

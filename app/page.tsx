@@ -116,18 +116,21 @@ export default function Dashboard() {
         setUser(u);
         setIsDemoMode(false);
         sessionStorage.removeItem("eepy_demo_mode");
-        if (u.displayName) {
-          localStorage.setItem("eepy_username", u.displayName);
-        }
       }
     });
   }, []);
 
   useEffect(() => {
     if (!user || isDemoMode) return;
+
+    queueMicrotask(() => {
+      setReports([]);
+      setLatest(null);
+    });
+
     const q = query(
       collection(db, "users", user.uid, "reports"),
-      orderBy("timestamp", "asc"),
+      orderBy("timestamp", "desc"),
       limit(7)
     );
     return onSnapshot(
@@ -136,17 +139,13 @@ export default function Dashboard() {
         const data = snap.docs
           .map((d) => ({ id: d.id, ...d.data() } as Report))
           .sort((a, b) => b.id.localeCompare(a.id));
-        if (data.length > 0) {
-          setReports(data);
-          setLatest(data[0] || null);
-        } else {
-          setReports(DEMO_REPORTS);
-          setLatest(DEMO_REPORTS[0]);
-        }
+        setReports(data);
+        setLatest(data[0] || null);
       },
-      () => {
-        setReports(DEMO_REPORTS);
-        setLatest(DEMO_REPORTS[0]);
+      (err) => {
+        console.error("Firestore error:", err);
+        setReports([]);
+        setLatest(null);
       }
     );
   }, [user, isDemoMode]);
@@ -162,11 +161,12 @@ export default function Dashboard() {
   }
 
   async function handleLogout() {
-    if (typeof window !== "undefined") {
-      sessionStorage.removeItem("eepy_demo_mode");
-      localStorage.removeItem("eepy_demo_mode");
-    }
+    sessionStorage.removeItem("eepy_demo_mode");
+    localStorage.removeItem("eepy_demo_mode");
+    localStorage.removeItem("eepy_username");
     setIsDemoMode(false);
+    setReports([]);
+    setLatest(null);
     setUser(null);
     await logout();
   }
@@ -178,7 +178,6 @@ export default function Dashboard() {
         await login(email, password);
       } else {
         const cleanName = username.trim() || email.split("@")[0];
-        localStorage.setItem("eepy_username", cleanName);
         await register(email, password, cleanName);
       }
     } catch (e: unknown) {
