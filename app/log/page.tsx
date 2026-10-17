@@ -4,297 +4,338 @@ import { auth, db } from "@/lib/firebase";
 import { doc, setDoc, getDoc } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
 import { useRouter } from "next/navigation";
+import Navbar from "@/app/components/Navbar";
 
 const today = new Date().toISOString().split("T")[0];
 
 const defaultLog = {
-  date:       today,
-  caffeine:   0,
-  alcohol:    0,
-  exercise:   false,
+  date: today,
+  caffeine: 0,
+  alcohol: 0,
+  exercise: false,
   cycleToday: false,
   medication: "",
-  stress:     5,
+  stress: 5,
   productivity: 5,
-  notes:      ""
+  notes: ""
 };
 
 export default function LogPage() {
-  const [user,       setUser]       = useState<any>(null);
-  const [log,        setLog]        = useState(defaultLog);
+  const [user, setUser] = useState<any>(null);
+  const [log, setLog] = useState(defaultLog);
   const [trackCycle, setTrackCycle] = useState(false);
-  const [saved,      setSaved]      = useState(false);
-  const [loading,    setLoading]    = useState(true);
+  const [saved, setSaved] = useState(false);
+  const [loading, setLoading] = useState(true);
   const router = useRouter();
 
   useEffect(() => {
-    return onAuthStateChanged(auth, async u => {
-      if (!u) { router.push("/"); return; }
+    const isDemo = sessionStorage.getItem("eepy_demo_mode") === "true";
+    const storedCycle = typeof window !== "undefined" ? localStorage.getItem("eepy_profile_cycle") : null;
+    const shouldTrack = storedCycle !== null ? storedCycle === "true" : false;
+
+    if (isDemo) {
+      setUser({ uid: "demo_user_123", email: "demo.sleeper@eepy.app" });
+      setTrackCycle(shouldTrack);
+      setLoading(false);
+      return;
+    }
+
+    return onAuthStateChanged(auth, async (u) => {
+      if (!u) {
+        router.push("/");
+        return;
+      }
       setUser(u);
-      // load today's log if it exists
-      const ref  = doc(db, "users", u.uid, "logs", today);
-      const snap = await getDoc(ref);
-      if (snap.exists()) setLog({ ...defaultLog, ...snap.data() });
+      try {
+        const ref = doc(db, "users", u.uid, "logs", today);
+        const snap = await getDoc(ref);
+        if (snap.exists()) setLog({ ...defaultLog, ...snap.data() });
+      } catch (e) {
+        console.warn("Log fetch error:", e);
+      }
       setLoading(false);
     });
-  }, []);
+  }, [router]);
 
   useEffect(() => {
-    if (!user) return;
-    const loadProfile = async () => {
-      const profileSnap = await getDoc(doc(db, "users", user.uid, "profile", "info"));
-      setTrackCycle(profileSnap.exists() && profileSnap.data()?.cycle === true);
+    const checkCycleTracking = async () => {
+      const storedCycle = typeof window !== "undefined" ? localStorage.getItem("eepy_profile_cycle") : null;
+      if (storedCycle !== null) {
+        setTrackCycle(storedCycle === "true");
+        return;
+      }
+
+      if (user && user.uid !== "demo_user_123") {
+        try {
+          const profileSnap = await getDoc(doc(db, "users", user.uid, "profile", "info"));
+          if (profileSnap.exists()) {
+            const isCycleEnabled = profileSnap.data()?.cycle === true;
+            setTrackCycle(isCycleEnabled);
+            localStorage.setItem("eepy_profile_cycle", JSON.stringify(isCycleEnabled));
+          }
+        } catch (e) {
+          console.warn("Profile fetch error:", e);
+        }
+      }
     };
-    loadProfile();
+
+    checkCycleTracking();
   }, [user]);
 
   async function save() {
     if (!user) return;
-    await setDoc(doc(db, "users", user.uid, "logs", today), log);
+    if (user.uid !== "demo_user_123") {
+      try {
+        await setDoc(doc(db, "users", user.uid, "logs", today), log);
+      } catch (e) {
+        console.warn("Log save error:", e);
+      }
+    }
     setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+    setTimeout(() => setSaved(false), 2500);
   }
 
   function update(field: string, value: any) {
-    setLog(prev => ({ ...prev, [field]: value }));
+    setLog((prev) => ({ ...prev, [field]: value }));
   }
 
-  if (loading) return <div style={s.page}><p style={{color:"#aaa"}}>Loading...</p></div>;
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[#120917] text-white flex items-center justify-center">
+        <div className="flex items-center gap-3 text-pink-400">
+          <svg className="animate-spin h-6 w-6" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+          </svg>
+          <span className="text-base font-semibold">Loading daily log...</span>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div style={s.page}>
-      <div style={s.card}>
+    <div className="min-h-screen bg-[#120917] text-white relative pb-20">
+      <Navbar user={user} />
 
-        <div style={s.header}>
-          <div>
-            <h1 style={s.title}>Today's Log</h1>
-            <p style={s.date}>{today}</p>
-          </div>
-            <span style={s.back} onClick={() => router.push("/")}>Return to Dashboard</span>        
-          </div>
-        <p style={s.sub}>Track your daily habits so Eepy can find patterns in your sleep.</p>
-
-        {/* Caffeine */}
-        <div style={s.field}>
-          <label style={s.label}>Caffeine (cups)</label>
-          <div style={s.row}>
-            {[0,1,2,3,4,5].map(n => (
-              <button key={n} style={log.caffeine === n ? s.chipOn : s.chipOff}
-                onClick={() => update("caffeine", n)}>{n}</button>
-            ))}
-          </div>
-        </div>
-
-        {/* Alcohol */}
-        <div style={s.field}>
-          <label style={s.label}>Alcohol (drinks)</label>
-          <div style={s.row}>
-            {[0,1,2,3,4,5].map(n => (
-              <button key={n} style={log.alcohol === n ? s.chipOn : s.chipOff}
-                onClick={() => update("alcohol", n)}>{n}</button>
-            ))}
-          </div>
-        </div>
-
-        {/* Exercise */}
-        <div style={s.field}>
-          <label style={s.label}>Exercise today</label>
-          <div style={s.row}>
-            <button style={log.exercise ? s.chipOn : s.chipOff}
-              onClick={() => update("exercise", true)}>Yes</button>
-            <button style={!log.exercise ? s.chipOn : s.chipOff}
-              onClick={() => update("exercise", false)}>No</button>
-          </div>
-        </div>
-
-        {trackCycle && (
-          <div style={s.field}>
-            <label style={s.label}>Cycle today</label>
-            <div style={s.row}>
-              <button style={log.cycleToday ? s.chipOn : s.chipOff}
-                onClick={() => update("cycleToday", true)}>Yes</button>
-              <button style={!log.cycleToday ? s.chipOn : s.chipOff}
-                onClick={() => update("cycleToday", false)}>No</button>
-            </div>
-            <p style={{ color: "#f2d9ff", fontSize: "1rem", marginTop: "0.75rem" }}>
-              This only appears when menstrual cycle tracking is enabled in your profile.
-            </p>
+      <main className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8 relative z-10 space-y-6">
+        
+        {/* Toast Notification */}
+        {saved && (
+          <div className="fixed bottom-6 right-6 z-50 glass-card px-6 py-4 rounded-2xl shadow-2xl border border-pink-500/50 text-white text-sm font-bold flex items-center gap-3 animate-bounce">
+            <span>Log saved successfully.</span>
           </div>
         )}
 
-        {/* Stress */}
-        <div style={s.field}>
-          <label style={s.label}>Stress level: <strong>{log.stress}/10</strong></label>
-          <input type="range" min={1} max={10} value={log.stress}
-            onChange={e => update("stress", Number(e.target.value))}
-            style={s.slider}/>
+        <div className="glass-card rounded-3xl p-6 sm:p-10 space-y-8 border border-pink-500/25 shadow-xl">
+          
+          {/* Header */}
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-pink-500/20 pb-6">
+            <div>
+              <span className="text-xs uppercase font-extrabold tracking-wider px-3 py-1 rounded-md bg-pink-500/20 text-pink-300 border border-pink-500/30">
+                Daily Entry
+              </span>
+              <h1 className="text-2xl sm:text-3xl font-extrabold text-white mt-2">Daily Habit & Lifestyle Log</h1>
+              <p className="text-sm text-white/70 mt-1">Correlate caffeine, stress, and routine against automated sleep scores.</p>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <span className="px-4 py-2 rounded-xl text-sm font-mono font-bold bg-black/40 text-pink-200 border border-pink-500/30">
+                {today}
+              </span>
+              <button
+                onClick={() => router.push("/")}
+                className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/15 text-xs text-white border border-pink-500/30 font-bold"
+              >
+                Dashboard
+              </button>
+            </div>
+          </div>
+
+          <div className="space-y-7">
+            
+            {/* Caffeine */}
+            <div className="space-y-2.5">
+              <label className="text-sm font-bold uppercase tracking-wider text-white flex items-center justify-between">
+                <span>Caffeine Consumption</span>
+                <span className="text-sm text-pink-300 font-mono font-bold">{log.caffeine} cups</span>
+              </label>
+              <div className="flex items-center gap-2.5 flex-wrap">
+                {[0, 1, 2, 3, 4, 5].map((n) => (
+                  <button
+                    key={n}
+                    type="button"
+                    onClick={() => update("caffeine", n)}
+                    className={`px-5 py-3 rounded-xl text-sm font-bold font-mono transition-all ${
+                      log.caffeine === n
+                        ? "bg-pink-600 text-white shadow-lg shadow-pink-600/40 border border-pink-400"
+                        : "bg-black/40 hover:bg-black/60 text-white/80 border border-pink-500/20"
+                    }`}
+                  >
+                    {n}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Alcohol */}
+            <div className="space-y-2.5">
+              <label className="text-sm font-bold uppercase tracking-wider text-white flex items-center justify-between">
+                <span>Alcohol Consumption</span>
+                <span className="text-sm text-pink-300 font-mono font-bold">{log.alcohol} units</span>
+              </label>
+              <div className="flex items-center gap-2.5 flex-wrap">
+                {[0, 1, 2, 3, 4].map((n) => (
+                  <button
+                    key={n}
+                    type="button"
+                    onClick={() => update("alcohol", n)}
+                    className={`px-5 py-3 rounded-xl text-sm font-bold font-mono transition-all ${
+                      log.alcohol === n
+                        ? "bg-pink-600 text-white shadow-lg shadow-pink-600/40 border border-pink-400"
+                        : "bg-black/40 hover:bg-black/60 text-white/80 border border-pink-500/20"
+                    }`}
+                  >
+                    {n}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Physical Exercise */}
+            <div className="space-y-2.5">
+              <label className="text-sm font-bold uppercase tracking-wider text-white block">
+                Physical Exercise
+              </label>
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => update("exercise", true)}
+                  className={`flex-1 py-3 px-4 rounded-xl text-sm font-bold uppercase tracking-wider transition-all ${
+                    log.exercise
+                      ? "bg-pink-600 text-white shadow-lg shadow-pink-600/40 border border-pink-400"
+                      : "bg-black/40 text-white/70 border border-pink-500/20"
+                  }`}
+                >
+                  Worked Out Today
+                </button>
+                <button
+                  type="button"
+                  onClick={() => update("exercise", false)}
+                  className={`flex-1 py-3 px-4 rounded-xl text-sm font-bold uppercase tracking-wider transition-all ${
+                    !log.exercise
+                      ? "bg-pink-600 text-white shadow-lg shadow-pink-600/40 border border-pink-400"
+                      : "bg-black/40 text-white/70 border border-pink-500/20"
+                  }`}
+                >
+                  Rest Day / None
+                </button>
+              </div>
+            </div>
+
+            {/* MENSTRUAL CYCLE PHASE: Only shown if cycle tracking is enabled in Profile */}
+            {trackCycle && (
+              <div className="space-y-3 p-6 rounded-2xl bg-black/40 border border-pink-500/30">
+                <label className="text-sm font-bold uppercase tracking-wider text-white block">
+                  Cycle Phase Active Today
+                </label>
+                <p className="text-xs text-white/70">
+                  Correlates cycle phases against sleep continuity and temperature variance.
+                </p>
+                <div className="flex items-center gap-3 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => update("cycleToday", true)}
+                    className={`flex-1 py-3 rounded-xl text-xs sm:text-sm font-bold uppercase tracking-wider transition-all ${
+                      log.cycleToday
+                        ? "bg-pink-600 text-white shadow-lg shadow-pink-600/40 border border-pink-400"
+                        : "bg-black/50 text-white/70 border border-pink-500/25"
+                    }`}
+                  >
+                    Active Phase
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => update("cycleToday", false)}
+                    className={`flex-1 py-3 rounded-xl text-xs sm:text-sm font-bold uppercase tracking-wider transition-all ${
+                      !log.cycleToday
+                        ? "bg-pink-600 text-white shadow-lg shadow-pink-600/40 border border-pink-400"
+                        : "bg-black/50 text-white/70 border border-pink-500/25"
+                    }`}
+                  >
+                    Inactive
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Stress level */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <label className="text-sm font-bold uppercase tracking-wider text-white">Stress Rating</label>
+                <span className="text-base font-black text-pink-300 font-mono">{log.stress} / 10</span>
+              </div>
+              <input
+                type="range"
+                min={1}
+                max={10}
+                value={log.stress}
+                onChange={(e) => update("stress", Number(e.target.value))}
+                className="w-full accent-pink-500"
+              />
+              <div className="flex justify-between text-xs text-white/50 font-mono">
+                <span>Relaxed (1)</span>
+                <span>Moderate (5)</span>
+                <span>High Stress (10)</span>
+              </div>
+            </div>
+
+            {/* Productivity */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <label className="text-sm font-bold uppercase tracking-wider text-white">Productivity Rating</label>
+                <span className="text-base font-black text-pink-300 font-mono">{log.productivity} / 10</span>
+              </div>
+              <input
+                type="range"
+                min={1}
+                max={10}
+                value={log.productivity}
+                onChange={(e) => update("productivity", Number(e.target.value))}
+                className="w-full accent-pink-500"
+              />
+              <div className="flex justify-between text-xs text-white/50 font-mono">
+                <span>Low (1)</span>
+                <span>Normal (5)</span>
+                <span>Peak (10)</span>
+              </div>
+            </div>
+
+            {/* Notes */}
+            <div className="space-y-2">
+              <label className="text-sm font-bold uppercase tracking-wider text-white block">
+                Evening Notes / Factors
+              </label>
+              <textarea
+                rows={3}
+                className="w-full px-4 py-3 rounded-2xl glass-input text-sm text-white placeholder-white/30"
+                placeholder="Any late meals, screen time, or travel..."
+                value={log.notes}
+                onChange={(e) => update("notes", e.target.value)}
+              />
+            </div>
+
+            {/* Save Button */}
+            <button
+              onClick={save}
+              className="w-full py-4 px-6 rounded-2xl glow-btn-pink text-white font-extrabold text-sm uppercase tracking-wider flex items-center justify-center gap-2 mt-4 shadow-lg shadow-pink-600/30"
+            >
+              <span>{saved ? "Saved Log Successfully ✓" : "Save Daily Log Entry"}</span>
+            </button>
+
+          </div>
+
         </div>
-
-        {/* Productivity */}
-        <div style={s.field}>
-          <label style={s.label}>Productivity: <strong>{log.productivity}/10</strong></label>
-          <input type="range" min={1} max={10} value={log.productivity}
-            onChange={e => update("productivity", Number(e.target.value))}
-            style={s.slider}/>
-        </div>
-
-        {/* Medication */}
-        <div style={s.field}>
-          <label style={s.label}>Medication (optional)</label>
-          <input style={s.input} placeholder="e.g. melatonin, antihistamine"
-            value={log.medication}
-            onChange={e => update("medication", e.target.value)}/>
-        </div>
-
-        {/* Notes */}
-        <div style={s.field}>
-          <label style={s.label}>Notes (optional)</label>
-          <textarea style={s.textarea} placeholder="Anything unusual today?"
-            value={log.notes}
-            onChange={e => update("notes", e.target.value)}/>
-        </div>
-
-        <button style={saved ? s.btnSaved : s.btn} onClick={save}>
-          {saved ? "✓ Saved!" : "Save Today's Log"}
-        </button>
-
-        <p style={s.back} onClick={() => router.push("/")}>← Return to dashboard</p>
-      </div>
+      </main>
     </div>
   );
 }
-
-const s: Record<string, React.CSSProperties> = {
-  page:     { 
-    minHeight:"100vh", 
-    display:"flex",
-    justifyContent:"center", 
-    alignItems:"flex-start", 
-    padding:"3rem 2rem",          
-    backgroundImage:`linear-gradient(rgba(20, 4, 35, 0.76), rgba(40, 10, 60, 0.88)), url('/pink_guitar.jpeg')`,
-          backgroundSize:"cover", 
-          backgroundPosition:"center" 
-  },
-
-  card:     { 
-    background:"rgba(255,255,255,0.12)", 
-    borderRadius:"24px", 
-    padding:"2.5rem",          
-    width:"100%", 
-    maxWidth:"760px", 
-    border:"1px solid rgba(219, 39, 119, 0.4)" 
-  },
-
-  header:   { 
-    display:"flex", 
-    justifyContent:"space-between", 
-    alignItems:"center", 
-    gap:"1rem", 
-    flexWrap:"wrap" 
-  },
-
-  title:    { 
-    color:"#ffe4fb", 
-    fontSize:"2rem", 
-    fontWeight:700, 
-    margin:0 
-  },
-
-  date:     { 
-    color:"#f5c6ff", 
-    fontSize:"1.25rem" 
-  },
-
-  sub:      { 
-    color:"#f2d9ff", 
-    fontSize:"1.25rem", 
-    marginTop:"0.75rem", 
-    marginBottom:"1.75rem", 
-    lineHeight:1.5 
-  },
-
-  field:    { 
-    marginBottom:"1.6rem" 
-  },
-
-  label:    { 
-    color:"#f6e3ff", 
-    fontSize:"1.12rem", 
-    display:"block", 
-    marginBottom:"0.65rem" 
-  },
-
-  row:      { 
-    display:"flex", 
-    gap:"0.6rem", 
-    flexWrap:"wrap" 
-  },
-  
-  chipOff:  { 
-    background:"rgba(255,255,255,0.08)", 
-    color:"#ecc8ff", 
-    border:"1px solid rgba(219, 39, 119, 0.4)",
-              borderRadius:"999px", 
-              padding:"0.45rem 1rem", 
-              cursor:"pointer", 
-              fontSize:"1rem", 
-              transition:"all 0.2s ease" 
-            },
-
-  chipOn:   { 
-    background:"#ec4899", 
-    color:"#fff", 
-    border:"1px solid #dba3bf",
-              borderRadius:"999px", 
-              padding:"0.45rem 1rem", 
-              cursor:"pointer", 
-              fontSize:"1rem", 
-              transition:"all 0.2s ease" 
-            },
-
-  slider:   { 
-    width:"100%", 
-    accentColor:"#ec4899" 
-  },
-
-  input:    { 
-    width:"100%", 
-    background:"rgba(255,255,255,0.08)", 
-    border:"1px solid rgba(219, 39, 119, 0.4)",
-              borderRadius:"16px", padding:"0.75rem 1rem", color:"#fff",
-              fontSize:"1.12rem", boxSizing:"border-box", outline:"none" 
-            },
-
-  textarea: { 
-    width:"100%", 
-    background:"rgba(255,255,255,0.08)", 
-    border:"1px solid rgba(219, 39, 119, 0.4)",
-              borderRadius:"16px", padding:"0.75rem 1rem", color:"#fff",
-              fontSize:"1.12rem", minHeight:"100px", resize:"vertical",
-              boxSizing:"border-box", outline:"none" 
-            },
-
-  btn:      { 
-    width:"100%", 
-    background:"#ec4899", 
-    color:"#fff", 
-    border:"none",
-              borderRadius:"14px", padding:"0.75rem", fontSize:"1.05rem",
-              cursor:"pointer", marginTop:"0.75rem", marginBottom:"1rem"
-            },
-
-  btnSaved: { 
-    width:"100%", 
-    background:"#6d1a43", 
-    color:"#fff", 
-    border:"none",
-              borderRadius:"14px", padding:"0.75rem", fontSize:"1.05rem",
-              cursor:"pointer", marginTop:"0.75rem", marginBottom:"1rem"
-            },
-
-  back: {
-    fontSize: "1.05rem", background: "#ec4899", color: "#fff",
-    border: "none", borderRadius: "8px", padding: "0.6rem 1rem",
-    cursor: "pointer", fontWeight: 500
-  }
-};

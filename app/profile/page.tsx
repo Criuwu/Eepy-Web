@@ -4,233 +4,353 @@ import { auth, db } from "@/lib/firebase";
 import { doc, setDoc, getDoc } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
 import { useRouter } from "next/navigation";
+import Navbar from "@/app/components/Navbar";
 
 const defaultProfile = {
-  name:       "",
-  age:        "",
-  weight:     "",
-  height:     "",
-  occupation: "",
-  gender:     "",
-  cycle:      false,
+  name: "Demo Sleeper",
+  age: "26",
+  weight: "65",
+  height: "172",
+  occupation: "IoT Developer",
+  gender: "Female",
+  cycle: true,
 };
 
 export default function ProfilePage() {
-  const [user,    setUser]    = useState<any>(null);
+  const [user, setUser] = useState<any>(null);
   const [profile, setProfile] = useState(defaultProfile);
-  const [saved,   setSaved]   = useState(false);
+  const [saved, setSaved] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [copiedUid, setCopiedUid] = useState(false);
   const router = useRouter();
 
   useEffect(() => {
-    return onAuthStateChanged(auth, async u => {
-      if (!u) { router.push("/"); return; }
+    const isDemo = sessionStorage.getItem("eepy_demo_mode") === "true";
+    const localName = localStorage.getItem("eepy_username") || "Demo Sleeper";
+    const localCycle = localStorage.getItem("eepy_profile_cycle");
+
+    if (isDemo) {
+      setUser({ uid: "demo_user_123", email: "demo.sleeper@eepy.app", displayName: localName });
+      setProfile((prev) => ({
+        ...prev,
+        name: localName,
+        cycle: localCycle !== null ? localCycle === "true" : true,
+      }));
+      setLoading(false);
+      return;
+    }
+
+    return onAuthStateChanged(auth, async (u) => {
+      if (!u) {
+        router.push("/");
+        return;
+      }
       setUser(u);
-      const snap = await getDoc(doc(db, "users", u.uid, "profile", "info"));
-      if (snap.exists()) setProfile({ ...defaultProfile, ...snap.data() });
+      try {
+        const snap = await getDoc(doc(db, "users", u.uid, "profile", "info"));
+        if (snap.exists()) {
+          const data = snap.data();
+          setProfile({ ...defaultProfile, ...data });
+          if (data.cycle !== undefined) {
+            localStorage.setItem("eepy_profile_cycle", JSON.stringify(data.cycle));
+          }
+          if (data.name) {
+            localStorage.setItem("eepy_username", data.name);
+          }
+        }
+      } catch (e) {
+        console.warn("Profile load error:", e);
+      }
       setLoading(false);
     });
-  }, []);
+  }, [router]);
 
   async function save() {
     if (!user) return;
-    await setDoc(doc(db, "users", user.uid, "profile", "info"), profile);
+
+    // Always persist to localStorage for immediate UI synchronization
+    localStorage.setItem("eepy_profile_cycle", JSON.stringify(profile.cycle));
+    if (profile.name) {
+      localStorage.setItem("eepy_username", profile.name);
+    }
+
+    if (user.uid !== "demo_user_123") {
+      try {
+        await setDoc(doc(db, "users", user.uid, "profile", "info"), profile);
+      } catch (e) {
+        console.warn("Profile save error:", e);
+      }
+    }
     setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+    setTimeout(() => setSaved(false), 2500);
   }
 
   function update(field: string, value: any) {
-    setProfile(prev => ({ ...prev, [field]: value }));
+    setProfile((prev) => {
+      const updated = { ...prev, [field]: value };
+      if (field === "cycle") {
+        localStorage.setItem("eepy_profile_cycle", JSON.stringify(value));
+      }
+      if (field === "name") {
+        localStorage.setItem("eepy_username", value);
+      }
+      return updated;
+    });
   }
 
-  if (loading) return <div style={s.page}><p style={{color:"#aaa"}}>Loading...</p></div>;
+  function copyPairingUid() {
+    const uid = user?.uid || "demo_user_123";
+    navigator.clipboard.writeText(uid);
+    setCopiedUid(true);
+    setTimeout(() => setCopiedUid(false), 2000);
+  }
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[#120917] text-white flex items-center justify-center">
+        <div className="flex items-center gap-3 text-pink-400">
+          <svg className="animate-spin h-6 w-6" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+          </svg>
+          <span className="text-base font-semibold">Loading profile...</span>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div style={s.page}>
-      <div style={s.card}>
+    <div className="min-h-screen bg-[#120917] text-white relative pb-20">
+      <Navbar user={user} />
 
-        <div style={s.header}>
-          <h1 style={s.title}>Profile</h1>
-          <span style={s.back} onClick={() => router.push("/")}>Return to Dashboard</span>
-        </div>
-        <p style={s.sub}>Your profile helps Eepy personalise sleep analysis.</p>
+      <main className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8 relative z-10 space-y-8">
 
-        {/* Name */}
-        <div style={s.field}>
-          <label style={s.label}>Name</label>
-          <input style={s.input} placeholder="e.g. Bulbucosaurus"
-            value={profile.name}
-            onChange={e => update("name", e.target.value)}/>
-        </div>
-
-        {/* Age */}
-        <div style={s.field}>
-          <label style={s.label}>Age</label>
-          <input style={s.input} type="number" placeholder="e.g. 20"
-            value={profile.age}
-            onChange={e => update("age", e.target.value)}/>
-        </div>
-
-        {/* Gender */}
-        <div style={s.field}>
-          <label style={s.label}>Gender</label>
-          <div style={s.row}>
-            {["Female","Male","Other","Prefer not to say"].map(g => (
-              <button key={g}
-                style={profile.gender === g ? s.chipOn : s.chipOff}
-                onClick={() => update("gender", g)}>{g}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Weight */}
-        <div style={s.field}>
-          <label style={s.label}>Weight (kg)</label>
-          <input style={s.input} type="number" placeholder="e.g. 60"
-            value={profile.weight}
-            onChange={e => update("weight", e.target.value)}/>
-        </div>
-
-        {/* Height */}
-        <div style={s.field}>
-          <label style={s.label}>Height (cm)</label>
-          <input style={s.input} type="number" placeholder="e.g. 165"
-            value={profile.height}
-            onChange={e => update("height", e.target.value)}/>
-        </div>
-
-        {/* Occupation */}
-        <div style={s.field}>
-          <label style={s.label}>Occupation</label>
-          <input style={s.input} placeholder="e.g. Student"
-            value={profile.occupation}
-            onChange={e => update("occupation", e.target.value)}/>
-        </div>
-
-        {/* Menstrual cycle — show only if Female */}
-        {profile.gender === "Female" && (
-          <div style={s.field}>
-            <label style={s.label}>Track menstrual cycle</label>
-            <p style={s.hint}>
-              Allows Eepy to correlate hormonal phases with sleep quality.
-            </p>
-            <div style={s.row}>
-              <button style={profile.cycle ? s.chipOn : s.chipOff}
-                onClick={() => update("cycle", true)}>Yes</button>
-              <button style={!profile.cycle ? s.chipOn : s.chipOff}
-                onClick={() => update("cycle", false)}>No</button>
-            </div>
+        {/* Toast Notification */}
+        {saved && (
+          <div className="fixed bottom-6 right-6 z-50 glass-card px-6 py-4 rounded-2xl shadow-2xl border border-pink-500/50 text-white text-sm font-bold flex items-center gap-3 animate-bounce">
+            <span>Profile and settings saved successfully.</span>
           </div>
         )}
 
-        <button style={saved ? s.btnSaved : s.btn} onClick={save}>
-          {saved ? "✓ Saved!" : "Save Profile"}
-        </button>
+        {/* CONNECT MACHINE (RASPBERRY PI) CARD */}
+        <div className="glass-card rounded-3xl p-6 sm:p-8 space-y-5 border border-pink-500/30 shadow-xl">
+          <div className="flex items-center justify-between border-b border-pink-500/20 pb-4">
+            <div>
+              <span className="text-xs font-bold text-pink-400 uppercase tracking-wider block">Hardware Integration</span>
+              <h2 className="text-xl font-bold text-white mt-1">Connect Your Machine (Raspberry Pi)</h2>
+              <p className="text-xs text-white/70 mt-0.5">
+                Link your bedside Raspberry Pi sensor hub to push live accelerometer, microphone, and temperature telemetry.
+              </p>
+            </div>
+            <span className="px-3 py-1 rounded-full text-xs font-bold bg-pink-600/20 text-pink-300 border border-pink-500/35">
+              Node Ready
+            </span>
+          </div>
 
-      </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+            <div className="p-4 rounded-2xl bg-black/40 border border-pink-500/20 space-y-2.5">
+              <span className="text-xs font-bold uppercase tracking-wider text-pink-300 block">Your Machine Pairing UID</span>
+              <p className="text-xs text-white/60">
+                Use this identifier in your Raspberry Pi script to route sleep telemetry to this user account:
+              </p>
+              <div className="flex items-center gap-2">
+                <input
+                  readOnly
+                  value={user?.uid || "demo_user_123"}
+                  className="flex-1 px-3 py-2 rounded-xl bg-black/60 border border-pink-500/30 text-xs font-mono text-white"
+                />
+                <button
+                  onClick={copyPairingUid}
+                  className="px-4 py-2 rounded-xl text-xs font-bold glow-btn-pink text-white"
+                >
+                  {copiedUid ? "Copied!" : "Copy"}
+                </button>
+              </div>
+            </div>
+
+            <div className="p-4 rounded-2xl bg-black/40 border border-pink-500/20 space-y-2.5">
+              <span className="text-xs font-bold uppercase tracking-wider text-pink-300 block">Pi Telemetry Sync</span>
+              <p className="text-xs text-white/60">
+                Install dependencies on your Raspberry Pi:
+              </p>
+              <pre className="p-2.5 rounded-xl bg-black/60 font-mono text-[11px] text-pink-200 overflow-x-auto border border-pink-500/20">
+                {`pip install firebase-admin
+# Pushes nightly macros to:
+# users/{uid}/reports`}
+              </pre>
+            </div>
+          </div>
+        </div>
+
+        {/* Profile Card */}
+        <div className="glass-card rounded-3xl p-6 sm:p-10 space-y-8 border border-pink-500/30 shadow-xl">
+
+          {/* Header */}
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-pink-500/20 pb-6">
+            <div className="flex items-center gap-4">
+              <div className="w-16 h-16 rounded-2xl bg-pink-600/20 border border-pink-500/40 flex items-center justify-center text-2xl font-black text-pink-200 font-mono">
+                {profile.name ? profile.name.charAt(0).toUpperCase() : "U"}
+              </div>
+              <div>
+                <h1 className="text-2xl sm:text-3xl font-extrabold text-white">
+                  {profile.name || "User Profile"}
+                </h1>
+                <p className="text-sm text-white/70 mt-0.5">
+                  Personal parameters used for calibrating baseline sleep metrics.
+                </p>
+              </div>
+            </div>
+
+            <button
+              onClick={() => router.push("/")}
+              className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/15 text-xs text-white border border-pink-500/30 font-bold"
+            >
+              Dashboard
+            </button>
+          </div>
+
+          <div className="space-y-6">
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+              {/* Username / Name */}
+              <div className="space-y-2">
+                <label className="text-xs font-bold uppercase tracking-wider text-white ml-1 block">
+                  Username / Alias
+                </label>
+                <input
+                  className="w-full px-4 py-3.5 rounded-2xl glass-input text-sm text-white placeholder-white/30"
+                  placeholder="e.g. SleeperOne"
+                  value={profile.name}
+                  onChange={(e) => update("name", e.target.value)}
+                />
+              </div>
+
+              {/* Age */}
+              <div className="space-y-2">
+                <label className="text-xs font-bold uppercase tracking-wider text-white ml-1 block">
+                  Age (Years)
+                </label>
+                <input
+                  type="number"
+                  className="w-full px-4 py-3.5 rounded-2xl glass-input text-sm text-white placeholder-white/30 font-mono"
+                  placeholder="e.g. 24"
+                  value={profile.age}
+                  onChange={(e) => update("age", e.target.value)}
+                />
+              </div>
+
+              {/* Weight */}
+              <div className="space-y-2">
+                <label className="text-xs font-bold uppercase tracking-wider text-white ml-1 block">
+                  Weight (kg)
+                </label>
+                <input
+                  type="number"
+                  className="w-full px-4 py-3.5 rounded-2xl glass-input text-sm text-white placeholder-white/30 font-mono"
+                  placeholder="e.g. 68"
+                  value={profile.weight}
+                  onChange={(e) => update("weight", e.target.value)}
+                />
+              </div>
+
+              {/* Height */}
+              <div className="space-y-2">
+                <label className="text-xs font-bold uppercase tracking-wider text-white ml-1 block">
+                  Height (cm)
+                </label>
+                <input
+                  type="number"
+                  className="w-full px-4 py-3.5 rounded-2xl glass-input text-sm text-white placeholder-white/30 font-mono"
+                  placeholder="e.g. 175"
+                  value={profile.height}
+                  onChange={(e) => update("height", e.target.value)}
+                />
+              </div>
+            </div>
+
+            {/* Occupation */}
+            <div className="space-y-2">
+              <label className="text-xs font-bold uppercase tracking-wider text-white ml-1 block">
+                Occupation / Daily Routine
+              </label>
+              <input
+                className="w-full px-4 py-3.5 rounded-2xl glass-input text-sm text-white placeholder-white/30"
+                placeholder="e.g. Software Engineer, Student, Athlete"
+                value={profile.occupation}
+                onChange={(e) => update("occupation", e.target.value)}
+              />
+            </div>
+
+            {/* Gender Selection */}
+            <div className="space-y-2">
+              <label className="text-xs font-bold uppercase tracking-wider text-white ml-1 block">
+                Gender Identity
+              </label>
+              <div className="flex items-center gap-3 flex-wrap">
+                {["Female", "Male", "Other", "Prefer not to say"].map((g) => (
+                  <button
+                    key={g}
+                    type="button"
+                    onClick={() => update("gender", g)}
+                    className={`px-5 py-3 rounded-xl text-sm font-bold tracking-wide transition-all ${profile.gender === g
+                        ? "bg-pink-600 text-white shadow-lg shadow-pink-600/40 border border-pink-400"
+                        : "bg-black/40 hover:bg-black/60 text-white/80 border border-pink-500/20"
+                      }`}
+                  >
+                    {g}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Menstrual Cycle Option: Immediately updates localStorage */}
+            {profile.gender === "Female" && (
+              <div className="space-y-3 p-6 rounded-2xl bg-black/40 border border-pink-500/30">
+                <div>
+                  <label className="text-sm font-bold uppercase tracking-wider text-white block">
+                    Menstrual Cycle Tracking
+                  </label>
+                  <p className="text-xs text-white/70 mt-1">
+                    When enabled, cycle phases will be shown in the Daily Log to correlate with sleep metrics.
+                  </p>
+                </div>
+                <div className="flex items-center gap-3 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => update("cycle", true)}
+                    className={`flex-1 py-3 px-4 rounded-xl text-sm font-bold uppercase tracking-wider transition-all ${profile.cycle
+                        ? "bg-pink-600 text-white shadow-lg shadow-pink-600/40 border border-pink-400"
+                        : "bg-black/50 text-white/70 border border-pink-500/20"
+                      }`}
+                  >
+                    Enabled
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => update("cycle", false)}
+                    className={`flex-1 py-3 px-4 rounded-xl text-sm font-bold uppercase tracking-wider transition-all ${!profile.cycle
+                        ? "bg-pink-600 text-white shadow-lg shadow-pink-600/40 border border-pink-400"
+                        : "bg-black/50 text-white/70 border border-pink-500/20"
+                      }`}
+                  >
+                    Disabled
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Save Button */}
+            <button
+              onClick={save}
+              className="w-full py-4 px-6 rounded-2xl glow-btn-pink text-white font-extrabold text-sm uppercase tracking-wider flex items-center justify-center gap-2 mt-4 shadow-lg shadow-pink-600/30"
+            >
+              <span>{saved ? "Saved Profile Successfully ✓" : "Save Profile Configuration"}</span>
+            </button>
+
+          </div>
+
+        </div>
+      </main>
     </div>
   );
 }
-
-const s: Record<string, React.CSSProperties> = {
-  page: {
-    minHeight: "100vh",
-    display: "flex",
-    justifyContent: "center",
-    alignItems: "flex-start",
-    padding: "3rem 2rem",
-    boxSizing: "border-box",
-    color: "#fff",
-    backgroundImage: `linear-gradient(rgba(20, 4, 35, 0.76), rgba(40, 10, 60, 0.88)), url('/pink_flower.jpeg')`,
-    backgroundSize: "cover",
-    backgroundPosition: "center"
-  },
-  card: {
-    background: "rgba(255, 255, 255, 0.06)",
-    border: "1px solid rgba(219, 39, 119, 0.35)",
-    borderRadius: "24px",
-    padding: "2.5rem",
-    width: "100%",
-    maxWidth: "700px"
-  },
-  header: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    flexWrap: "wrap",
-    gap: "1rem"
-  },
-  title: { color: "#fce7f3", fontSize: "2rem", fontWeight: 700, margin: 0 },
-  back: {
-    fontSize: "1.05rem", background: "#ec4899", color: "#fff",
-    border: "none", borderRadius: "8px", padding: "0.6rem 1rem",
-    cursor: "pointer", fontWeight: 500
-  },
-  sub: {
-    color: "rgba(251, 207, 232, 0.9)",
-    fontSize: "1.25rem",
-    marginTop: "0.5rem",
-    marginBottom: "1.5rem"
-  },
-  field: { marginBottom: "1.4rem" },
-  label: {
-    color: "#f8f1f5",
-    fontSize: "1.12rem",
-    display: "block",
-    marginBottom: "0.5rem"
-  },
-  hint: {
-    color: "rgba(251, 207, 232, 0.65)",
-    fontSize: "1rem",
-    margin: "0 0 0.5rem"
-  },
-  row: { display: "flex", gap: "0.5rem", flexWrap: "wrap" as const },
-  chipOff: {
-    background: "rgba(255, 255, 255, 0.08)",
-    color: "rgba(251, 207, 232, 0.8)",
-    border: "1px solid rgba(219, 39, 119, 0.3)",
-    borderRadius: "8px",
-    padding: "0.4rem 0.9rem",
-    cursor: "pointer",
-    fontSize: "1rem",
-    transition: "all 0.2s"
-  },
-  chipOn: {
-    background: "#ec4899",
-    color: "#fff",
-    border: "1px solid #db2777",
-    borderRadius: "8px",
-    padding: "0.4rem 0.9rem",
-    cursor: "pointer",
-    fontSize: "1rem",
-    transition: "all 0.2s"
-  },
-  input: {
-    width: "100%",
-    background: "rgba(255, 255, 255, 0.08)",
-    border: "1px solid rgba(219, 39, 119, 0.3)",
-    borderRadius: "8px",
-    padding: "0.6rem 0.8rem",
-    color: "#fff",
-    fontSize: "1.12rem",
-    boxSizing: "border-box" as const
-  },
-  btn:      { 
-    width:"100%", 
-    background:"#ec4899", 
-    color:"#fff", 
-    border:"none",
-              borderRadius:"14px", padding:"0.75rem", fontSize:"1.05rem",
-              cursor:"pointer", marginTop:"0.75rem", marginBottom:"1rem"
-            },
-
-  btnSaved: { 
-    width:"100%", 
-    background:"#6d1a43", 
-    color:"#fff", 
-    border:"none",
-              borderRadius:"14px", padding:"0.75rem", fontSize:"1.05rem",
-              cursor:"pointer", marginTop:"0.75rem", marginBottom:"1rem"
-            },
-};
